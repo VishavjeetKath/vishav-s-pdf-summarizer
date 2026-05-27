@@ -1,140 +1,270 @@
 import streamlit as st
 import requests
-import time
 
-# Streamlit UI setup
-st.set_page_config(page_title="📄 AI-Powered PDF Summarizer", layout="wide")
+st.set_page_config(
+    page_title="NeuralPaper AI",
+    page_icon="🧠",
+    layout="wide"
+)
 
-# Apply custom styling for a sleek professional UI
+# ---------- CUSTOM CSS ----------
 st.markdown("""
-    <style>
-        body {
-            background-color: #282c34; /* Darker background */
-            color: #abb2bf; /* Lighter, less harsh text */
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Modern font */
-        }
-        .stTextInput>div>div>input {
-            font-size: 16px;
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid #61afef; /* Softer blue */
-            background-color: #3e4451; /* Darker input background */
-            color: #d1d5db; /* Light gray input text */
-        }
-        .stButton>button {
-            background-color: #61afef; /* Softer blue button */
-            color: #ffffff;
-            font-size: 18px;
-            font-weight: bold;
-            padding: 12px 28px;
-            border-radius: 8px;
-            transition: all 0.3s;
-        }
-        .stButton>button:hover {
-            background-color: #569cd6; /* Slightly darker on hover */
-            transform: translateY(-2px);
-        }
-        .stMarkdown, .stSubheader {
-            color: #e06c75; /* Soft red for headers */
-            font-weight: bold;
-        }
-        .summary-section {
-            background-color: #3e4451;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            border-left: 5px solid #61afef;
-        }
-        .section-title {
-            color: #61afef;
-            font-size: 24px;
-            margin-bottom: 15px;
-        }
-        .section-content {
-            color: #d1d5db;
-            font-size: 16px;
-            line-height: 1.6;
-        }
-    </style>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+.stApp {
+    background: linear-gradient(
+        135deg,
+        #0f172a 0%,
+        #111827 45%,
+        #020617 100%
+    );
+    color: white;
+}
+
+.main-container {
+    padding-top: 40px;
+    padding-bottom: 40px;
+}
+
+.hero-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px);
+    border-radius: 24px;
+    padding: 48px;
+    margin-bottom: 30px;
+}
+
+.hero-title {
+    font-size: 64px;
+    font-weight: 700;
+    line-height: 1.05;
+    margin-bottom: 16px;
+    color: white;
+}
+
+.gradient-text {
+    background: linear-gradient(90deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.hero-subtitle {
+    color: #94a3b8;
+    font-size: 18px;
+    line-height: 1.7;
+    margin-bottom: 28px;
+    max-width: 700px;
+}
+
+.stTextInput > div > div > input {
+    background-color: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: white;
+    border-radius: 16px;
+    padding: 18px;
+    font-size: 16px;
+}
+
+.stTextInput > div > div > input:focus {
+    border: 1px solid #60a5fa;
+    box-shadow: none;
+}
+
+.stButton > button {
+    width: 100%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    color: white;
+    border: none;
+    border-radius: 14px;
+    padding: 14px 22px;
+    font-size: 17px;
+    font-weight: 600;
+    transition: 0.3s ease;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px);
+    opacity: 0.92;
+}
+
+.metric-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 24px;
+    text-align: center;
+}
+
+.metric-title {
+    color: #94a3b8;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.metric-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: white;
+}
+
+.summary-card {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px;
+    padding: 28px;
+    margin-bottom: 22px;
+}
+
+.summary-title {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: #60a5fa;
+}
+
+.summary-content {
+    color: #d1d5db;
+    line-height: 1.9;
+    font-size: 16px;
+}
+
+.footer-note {
+    color: #64748b;
+    text-align: center;
+    margin-top: 50px;
+    font-size: 14px;
+}
+</style>
 """, unsafe_allow_html=True)
 
-# Professional header
-st.title("📄 AI-Powered PDF Summarizer")
-st.markdown("Extract and summarize research papers with AI-powered efficiency.")
+# ---------- HERO ----------
+st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
-# Input for PDF URL
-pdf_url = st.text_input("🔗 Enter the Arxiv PDF URL:", 
-                        placeholder="https://arxiv.org/pdf/2401.02385.pdf")
-
-# Placeholder for status messages
-status_placeholder = st.empty()
-
-def format_section(title, content):
-    """Format a section of the summary with consistent styling"""
-    return f"""
-    <div class="summary-section">
-        <div class="section-title">{title}</div>
-        <div class="section-content">{content}</div>
+st.markdown("""
+<div class="hero-box">
+    <div class="hero-title">
+        AI Research <span class="gradient-text">Summarizer</span>
     </div>
-    """
 
-# Add a spinner and professional feedback system
-if st.button("🚀 Summarize PDF"):
+    <div class="hero-subtitle">
+        Transform complex research papers into structured technical summaries using
+        Ollama, Gemma 3, FastAPI, and Streamlit.
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------- METRICS ----------
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("""
+    <div class="metric-card">
+        <div class="metric-title">Model</div>
+        <div class="metric-value">Gemma 3</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    st.markdown("""
+    <div class="metric-card">
+        <div class="metric-title">Backend</div>
+        <div class="metric-value">FastAPI</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col3:
+    st.markdown("""
+    <div class="metric-card">
+        <div class="metric-title">Processing</div>
+        <div class="metric-value">Parallel</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ---------- INPUT ----------
+pdf_url = st.text_input(
+    "ArXiv PDF URL",
+    placeholder="https://arxiv.org/pdf/2401.02385.pdf"
+)
+
+# ---------- SUMMARY FUNCTION ----------
+def render_summary_section(title, content):
+    st.markdown(f"""
+    <div class="summary-card">
+        <div class="summary-title">{title}</div>
+        <div class="summary-content">{content}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ---------- BUTTON ----------
+if st.button("Generate Technical Summary"):
     if pdf_url:
-        with st.spinner("⏳ Processing... This may take a few minutes."):
-            status_placeholder.info("⏳ Fetching and summarizing the document...")
-            
+
+        with st.spinner("Analyzing research paper..."):
+
             try:
                 response = requests.post(
                     "http://localhost:8000/summarize_arxiv/",
                     json={"url": pdf_url},
                     timeout=3600
                 )
-                
+
                 if response.status_code == 200:
+
                     data = response.json()
+
                     if "error" in data:
-                        status_placeholder.error(f"❌ {data['error']}")
+                        st.error(data["error"])
+
                     else:
-                        summary = data.get("summary", "No summary generated.")
-                        status_placeholder.success("✅ Summary Ready!")
-                        
-                        # Split the summary into sections and display them
-                        sections = summary.split("#")[1:]  # Skip empty first split
-                        
+                        summary = data.get("summary", "")
+
+                        st.success("Summary generated successfully.")
+
+                        sections = summary.split("#")[1:]
+
                         for section in sections:
+
                             if section.strip():
-                                # Split section into title and content
+
                                 parts = section.split("\n", 1)
+
                                 if len(parts) == 2:
                                     title, content = parts
-                                    st.markdown(
-                                        format_section(title.strip(), content.strip()),
-                                        unsafe_allow_html=True
+
+                                    render_summary_section(
+                                        title.strip(),
+                                        content.strip()
                                     )
-                        
-                        # Add download button for the summary
+
                         st.download_button(
-                            "⬇️ Download Summary",
-                            summary,
-                            file_name="paper_summary.md",
+                            label="Download Summary",
+                            data=summary,
+                            file_name="research_summary.md",
                             mime="text/markdown"
                         )
-                else:
-                    status_placeholder.error("❌ Failed to process the PDF. Please check the URL and try again.")
-            except requests.exceptions.Timeout:
-                status_placeholder.error("⚠️ Request timed out. Please try again later.")
-            except Exception as e:
-                status_placeholder.error(f"⚠️ An error occurred: {str(e)}")
-    else:
-        status_placeholder.warning("⚠️ Please enter a valid Arxiv PDF URL.")
 
-# Add helpful instructions at the bottom
-st.markdown("---")
+                else:
+                    st.error("Failed to process the paper.")
+
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+
+    else:
+        st.warning("Please enter a valid ArXiv PDF URL.")
+
+# ---------- FOOTER ----------
 st.markdown("""
-### 📝 Notes:
-- Processing typically takes 3-5 minutes depending on paper length
-- Only Arxiv PDF URLs are supported
-- The summary is structured into key sections for better readability
-- You can download the summary as a markdown file
-""")
+<div class="footer-note">
+Built with Streamlit · FastAPI · Ollama · LangChain
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
