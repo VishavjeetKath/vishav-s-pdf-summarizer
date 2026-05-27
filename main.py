@@ -2,14 +2,13 @@ import os
 import logging
 import requests
 import fitz
-import asyncio
 import httpx
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# ---------------- LOGGING ---------------- #
+# ---------------- CONFIG ---------------- #
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,11 +17,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# ---------------- FASTAPI ---------------- #
-
 app = FastAPI()
-
-# ---------------- ENV ---------------- #
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -37,7 +32,7 @@ class URLRequest(BaseModel):
 def health_check():
     return {
         "status": "ok",
-        "message": "Backend is running successfully"
+        "message": "Backend is running"
     }
 
 # ---------------- MAIN ROUTE ---------------- #
@@ -46,9 +41,10 @@ def health_check():
 async def summarize_arxiv(request: URLRequest):
 
     try:
+
         url = request.url
 
-        logger.info(f"Downloading PDF from: {url}")
+        logger.info(f"Downloading PDF from {url}")
 
         pdf_path = download_pdf(url)
 
@@ -58,17 +54,19 @@ async def summarize_arxiv(request: URLRequest):
         text = extract_text_from_pdf(pdf_path)
 
         if not text:
-            return {"error": "No text extracted"}
+            return {"error": "No text extracted from PDF"}
 
         summary = await summarize_text(text)
 
         return {"summary": summary}
 
     except Exception as e:
+
         logger.error(str(e))
+
         return {"error": str(e)}
 
-# ---------------- PDF DOWNLOAD ---------------- #
+# ---------------- DOWNLOAD PDF ---------------- #
 
 def download_pdf(url):
 
@@ -79,22 +77,22 @@ def download_pdf(url):
 
         response = requests.get(url, timeout=30)
 
-        if response.status_code == 200:
+        if response.status_code != 200:
+            return None
 
-            pdf_path = "paper.pdf"
+        pdf_path = "paper.pdf"
 
-            with open(pdf_path, "wb") as f:
-                f.write(response.content)
+        with open(pdf_path, "wb") as f:
+            f.write(response.content)
 
-            return pdf_path
-
-        return None
+        return pdf_path
 
     except Exception as e:
+
         logger.error(str(e))
         return None
 
-# ---------------- PDF TEXT EXTRACTION ---------------- #
+# ---------------- EXTRACT TEXT ---------------- #
 
 def extract_text_from_pdf(pdf_path):
 
@@ -110,23 +108,24 @@ def extract_text_from_pdf(pdf_path):
         return text
 
     except Exception as e:
+
         logger.error(str(e))
         return ""
 
-# ---------------- SUMMARIZATION ---------------- #
+# ---------------- SUMMARIZE TEXT ---------------- #
 
 async def summarize_text(text):
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=12000,
-        chunk_overlap=300
+        chunk_overlap=500
     )
 
     chunks = splitter.split_text(text)
 
-    logger.info(f"Total chunks: {len(chunks)}")
+    logger.info(f"Created {len(chunks)} chunks")
 
-    summaries = []
+    chunk_summaries = []
 
     for i, chunk in enumerate(chunks):
 
@@ -134,14 +133,14 @@ async def summarize_text(text):
 
         summary = await summarize_chunk(chunk)
 
-        summaries.append(summary)
+        chunk_summaries.append(summary)
 
-    combined_summary = "\n\n".join(summaries)
+    combined_summary = "\n\n".join(chunk_summaries)
 
     final_prompt = f"""
-    Create a structured technical summary from the following content.
+    Create a structured technical summary of this research paper.
 
-    Organize into:
+    Organize the summary into:
     1. Overview
     2. Methodology
     3. Architecture
@@ -156,28 +155,27 @@ async def summarize_text(text):
 
     return final_summary
 
-# ---------------- CHUNK SUMMARIZATION ---------------- #
+# ---------------- SUMMARIZE CHUNK ---------------- #
 
 async def summarize_chunk(chunk):
 
     prompt = f"""
-    Extract the important technical details from the following research content.
+    Extract important technical details from the following content.
 
     Focus on:
-    - system architecture
-    - implementation
     - algorithms
+    - implementation
+    - architecture
     - datasets
+    - benchmarks
     - results
-    - performance metrics
+    - optimization techniques
 
     Content:
     {chunk}
     """
 
-    response = await groq_chat(prompt)
-
-    return response
+    return await groq_chat(prompt)
 
 # ---------------- GROQ API ---------------- #
 
@@ -195,7 +193,8 @@ async def groq_chat(prompt):
                 "role": "user",
                 "content": prompt
             }
-        ]
+        ],
+        "temperature": 0.3
     }
 
     async with httpx.AsyncClient(timeout=300) as client:
@@ -206,11 +205,17 @@ async def groq_chat(prompt):
             json=payload
         )
 
+        if response.status_code != 200:
+
+            logger.error(response.text)
+
+            return "Failed to generate summary"
+
         data = response.json()
 
         return data["choices"][0]["message"]["content"]
 
-# ---------------- RUN ---------------- #
+# ---------------- RUN SERVER ---------------- #
 
 if __name__ == "__main__":
 
