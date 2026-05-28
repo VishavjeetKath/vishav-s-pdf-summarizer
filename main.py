@@ -1,70 +1,79 @@
+```python
 import os
-import logging
-import requests
+import uuid
 import fitz
 import httpx
+import requests
 
-from fastapi import FastAPI
+from dotenv import load_dotenv
+
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+
 from pydantic import BaseModel
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# ---------------- CONFIG ---------------- #
+# ---------------- LOAD ENV ---------------- #
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-logger = logging.getLogger(__name__)
-
-app = FastAPI()
+load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# ---------------- FASTAPI ---------------- #
+
+app = FastAPI(title="NeuralPaper AI")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------------- REQUEST MODEL ---------------- #
 
 class URLRequest(BaseModel):
     url: str
 
-# ---------------- HEALTH CHECK ---------------- #
+# ---------------- HEALTH ---------------- #
 
 @app.get("/health")
-def health_check():
-    return {
-        "status": "ok",
-        "message": "Backend is running"
-    }
+def health():
+    return {"status": "running"}
 
-# ---------------- MAIN ROUTE ---------------- #
+# ---------------- URL ROUTE ---------------- #
 
-@app.post("/summarize_arxiv/")
-async def summarize_arxiv(request: URLRequest):
+@app.post("/summarize_url/")
+async def summarize_url(request: URLRequest):
 
-    try:
+    pdf_path = download_pdf(request.url)
 
-        url = request.url
+    if not pdf_path:
+        return {"error": "Invalid arXiv URL"}
 
-        logger.info(f"Downloading PDF from {url}")
+    text = extract_text(pdf_path)
 
-        pdf_path = download_pdf(url)
+    os.remove(pdf_path)
 
-        if not pdf_path:
-            return {"error": "Failed to download PDF"}
+    return await generate_complete_response(text)
 
-        text = extract_text_from_pdf(pdf_path)
+# ---------------- FILE ROUTE ---------------- #
 
-        if not text:
-            return {"error": "No text extracted from PDF"}
+@app.post("/upload_pdf/")
+async def upload_pdf(file: UploadFile = File(...)):
 
-        summary = await summarize_text(text)
+    file_id = f"{uuid.uuid4()}.pdf"
 
-        return {"summary": summary}
+    with open(file_id, "wb") as f:
+        f.write(await file.read())
 
-    except Exception as e:
+    text = extract_text(file_id)
 
-        logger.error(str(e))
+    os.remove(file_id)
 
-        return {"error": str(e)}
+    return await generate_complete_response(text)
 
 # ---------------- DOWNLOAD PDF ---------------- #
 
@@ -72,112 +81,132 @@ def download_pdf(url):
 
     try:
 
-        if not url.startswith("https://arxiv.org/pdf/"):
-            return None
-
-        response = requests.get(url, timeout=30)
+        response = requests.get(url)
 
         if response.status_code != 200:
             return None
 
-        pdf_path = "paper.pdf"
+        file_name = f"{uuid.uuid4()}.pdf"
 
-        with open(pdf_path, "wb") as f:
+        with open(file_name, "wb") as f:
             f.write(response.content)
 
-        return pdf_path
+        return file_name
 
-    except Exception as e:
-
-        logger.error(str(e))
+    except:
         return None
 
 # ---------------- EXTRACT TEXT ---------------- #
 
-def extract_text_from_pdf(pdf_path):
+def extract_text(pdf_path):
 
-    try:
+    text = ""
 
-        doc = fitz.open(pdf_path)
+    doc = fitz.open(pdf_path)
 
-        text = ""
+    for page in doc:
+        text += page.get_text()
 
-        for page in doc:
-            text += page.get_text()
+    return text
 
-        return text
+# ---------------- CHUNKING ---------------- #
 
-    except Exception as e:
-
-        logger.error(str(e))
-        return ""
-
-# ---------------- SUMMARIZE TEXT ---------------- #
-
-async def summarize_text(text):
+def chunk_text(text):
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=12000,
+        chunk_size=10000,
         chunk_overlap=500
     )
 
-    chunks = splitter.split_text(text)
+    return splitter.split_text(text)
 
-    logger.info(f"Created {len(chunks)} chunks")
+# ---------------- MAIN AI RESPONSE ---------------- #
 
-    chunk_summaries = []
+async def generate_complete_response(text):
 
-    for i, chunk in enumerate(chunks):
+    chunks = chunk_text(text)
 
-        logger.info(f"Processing chunk {i+1}")
+    summaries = []
 
-        summary = await summarize_chunk(chunk)
+    for chunk in chunks:
 
-        chunk_summaries.append(summary)
+        prompt = f"""
+        Extract important technical details from this research paper chunk.
 
-    combined_summary = "\n\n".join(chunk_summaries)
+        Focus on:
+        - methodology
+        - architecture
+        - datasets
+        - results
+        - innovations
+
+        Content:
+        {chunk}
+        """
+
+        result = await groq_chat(prompt)
+
+        summaries.append(result)
+
+    combined = "\n".join(summaries)
+
+    # ---------- FINAL SUMMARY ---------- #
 
     final_prompt = f"""
-    Create a structured technical summary of this research paper.
+    Create a structured research summary.
 
-    Organize the summary into:
-    1. Overview
-    2. Methodology
-    3. Architecture
-    4. Results
-    5. Key Insights
+    Use these sections:
 
-    Content:
-    {combined_summary}
-    """
-
-    final_summary = await groq_chat(final_prompt)
-
-    return final_summary
-
-# ---------------- SUMMARIZE CHUNK ---------------- #
-
-async def summarize_chunk(chunk):
-
-    prompt = f"""
-    Extract important technical details from the following content.
-
-    Focus on:
-    - algorithms
-    - implementation
-    - architecture
-    - datasets
-    - benchmarks
-    - results
-    - optimization techniques
+    # Overview
+    # Methodology
+    # Architecture
+    # Results
+    # Key Insights
 
     Content:
-    {chunk}
+    {combined}
     """
 
-    return await groq_chat(prompt)
+    summary = await groq_chat(final_prompt)
 
-# ---------------- GROQ API ---------------- #
+    # ---------- FLASHCARDS ---------- #
+
+    flashcard_prompt = f"""
+    Generate 10 flashcards from this research paper.
+
+    Format:
+    Q:
+    A:
+
+    Content:
+    {combined}
+    """
+
+    flashcards = await groq_chat(flashcard_prompt)
+
+    # ---------- QUIZ ---------- #
+
+    quiz_prompt = f"""
+    Generate 10 technical MCQs from this research paper.
+
+    Include:
+    - question
+    - 4 options
+    - correct answer
+
+    Content:
+    {combined}
+    """
+
+    quiz = await groq_chat(quiz_prompt)
+
+    return {
+        "summary": summary,
+        "flashcards": flashcards,
+        "quiz": quiz
+    }
+
+# ---------------- GROQ ---------------- #
 
 async def groq_chat(prompt):
 
@@ -187,7 +216,7 @@ async def groq_chat(prompt):
     }
 
     payload = {
-        "model": "llama3-8b-8192",
+        "model": "llama-3.3-70b-versatile",
         "messages": [
             {
                 "role": "user",
@@ -205,17 +234,11 @@ async def groq_chat(prompt):
             json=payload
         )
 
-        if response.status_code != 200:
-
-            logger.error(response.text)
-
-            return "Failed to generate summary"
-
         data = response.json()
 
         return data["choices"][0]["message"]["content"]
 
-# ---------------- RUN SERVER ---------------- #
+# ---------------- RUN ---------------- #
 
 if __name__ == "__main__":
 
@@ -226,3 +249,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
+```
