@@ -1,8 +1,1 @@
-fastapi
-uvicorn
-requests
-PyMuPDF
-httpx
-langchain
-langchain-text-splitters
-python-dotenv
+fastapi uvicorn requests PyMuPDF httpx langchain langchain-text-splitters python-dotenv python-multipart
